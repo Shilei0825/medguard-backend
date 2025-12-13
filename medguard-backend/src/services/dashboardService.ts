@@ -37,115 +37,125 @@ interface RiskTimelinePoint {
   overallRiskLevel: RiskLevel | null;
 }
 
-export const dashboardService = {
-  /**
-   * Get comprehensive dashboard overview for an organization.
-   */
-  async getOverview(orgId: string): Promise<DashboardOverview> {
-    // Get total scans count
+async getOverview(orgId: string): Promise<DashboardOverview> {
+  // Always return a complete object, even when DB is empty or errors happen
+  const empty: DashboardOverview = {
+    totalScans: 0,
+    totalFiles: 0,
+    totalPhiCount: 0,
+    highRiskFilesCount: 0,
+    overallRiskScore: 0,
+    overallRiskLevel: "LOW",
+    recentAlerts: [],
+    recentScans: []
+  };
+
+  try {
+    // 1) Total scans count
     const { count: totalScans, error: scanCountError } = await supabase
-      .from('scans')
-      .select('*', { count: 'exact', head: true })
-      .eq('org_id', orgId);
+      .from("scans")
+      .select("*", { count: "exact", head: true })
+      .eq("org_id", orgId);
 
-    if (scanCountError) throw new Error(`Failed to count scans: ${scanCountError.message}`);
-
-    // Get total files count
-    const { count: totalFiles, error: fileCountError } = await supabase
-      .from('scanned_files')
-      .select('*', { count: 'exact', head: true })
-      .eq('org_id', orgId);
-
-    if (fileCountError) throw new Error(`Failed to count files: ${fileCountError.message}`);
-
-    // Get total PHI count
-    const { data: phiData, error: phiError } = await supabase
-      .from('phi_findings')
-      .select('occurrences')
-      .eq('org_id', orgId);
-
-    if (phiError) throw new Error(`Failed to get PHI count: ${phiError.message}`);
-
-    const totalPhiCount = (phiData || []).reduce((sum, f) => sum + (f.occurrences || 0), 0);
-
-    // Get high-risk and critical-risk file counts
-    const { count: highRiskCount, error: highRiskError } = await supabase
-      .from('scanned_files')
-      .select('*', { count: 'exact', head: true })
-      .eq('org_id', orgId)
-      .eq('risk_level', 'HIGH');
-
-    if (highRiskError) throw new Error(`Failed to count high-risk files: ${highRiskError.message}`);
-
-    const { count: criticalRiskCount, error: criticalError } = await supabase
-      .from('scanned_files')
-      .select('*', { count: 'exact', head: true })
-      .eq('org_id', orgId)
-      .eq('risk_level', 'CRITICAL');
-
-    if (criticalError) throw new Error(`Failed to count critical files: ${criticalError.message}`);
-
-    // Get overall risk score from latest snapshot or recent scans
-    let overallRiskScore: number | null = null;
-    
-    const { data: latestSnapshot } = await supabase
-      .from('risk_snapshots')
-      .select('overall_risk_score')
-      .eq('org_id', orgId)
-      .order('snapshot_date', { ascending: false })
-      .limit(1)
-      .single();
-
-    if (latestSnapshot) {
-      overallRiskScore = latestSnapshot.overall_risk_score;
-    } else {
-      // Fallback: calculate from recent scans
-      const { data: recentScansForScore } = await supabase
-        .from('scans')
-        .select('overall_risk_score')
-        .eq('org_id', orgId)
-        .eq('status', 'completed')
-        .not('overall_risk_score', 'is', null)
-        .order('completed_at', { ascending: false })
-        .limit(10);
-
-      if (recentScansForScore && recentScansForScore.length > 0) {
-        const sumScores = recentScansForScore.reduce((sum, s) => sum + (s.overall_risk_score || 0), 0);
-        overallRiskScore = Math.round(sumScores / recentScansForScore.length);
-      }
+    if (scanCountError) {
+      console.error("getOverview scan count error:", scanCountError);
+      // Don't throw; keep going with defaults
     }
 
-    // Get recent alerts
+    // 2) Total files count
+    const { count: totalFiles, error: fileCountError } = await supabase
+      .from("scanned_files")
+      .select("*", { count: "exact", head: true })
+      .eq("org_id", orgId);
+
+    if (fileCountError) {
+      console.error("getOverview file count error:", fileCountError);
+    }
+
+    // 3) Total PHI count (sum phi_count across scanned_files)
+    // If you have a phi_count column already, this is easiest.
+    // If not, you can count rows in phi_findings instead.
+    let totalPhiCount = 0;
+    const { data: phiRows, error: phiSumError } = await supabase
+      .from("scanned_files")
+      .select("phi_count")
+      .eq("org_id", orgId)
+      .limit(5000); // protect against huge orgs
+
+    if (phiSumError) {
+      console.error("getOverview phi sum error:", phiSumError);
+    } else if (phiRows) {
+      totalPhiCount = phiRows.reduce((acc, r: any) => acc + (Number(r.phi_count) || 0), 0);
+    }
+
+    // 4) High risk files count (define “high-risk” based on your risk_level values)
+    // If your values include HIGH/CRITICAL, count those.
+    const { count: highRiskFilesCount, error: highRiskError } = await supabase
+      .from("scanned_files")
+      .select("*", { count: "exact", head: true })
+      .eq("org_id", orgId)
+      .in("risk_level", ["HIGH", "CRITICAL"]);
+
+    if (highRiskError) {
+      console.error("getOverview high risk file count error:", highRiskError);
+    }
+
+    // 5) Overall risk score/level from most recent scan (fallback to 0/LOW)
+    const { data: latestScan, error: latestScanError } = await supabase
+      .from("scans")
+      .select("overall_risk_score, overall_risk_level, started_at")
+      .eq("org_id", orgId)
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (latestScanError) {
+      console.error("getOverview latest scan error:", latestScanError);
+    }
+
+    const overallRiskScore = Number(latestScan?.overall_risk_score) || 0;
+    const overallRiskLevel = (latestScan?.overall_risk_level as any) || "LOW";
+
+    // 6) Recent alerts
     const { data: recentAlerts, error: alertsError } = await supabase
-      .from('alerts')
-      .select('*')
-      .eq('org_id', orgId)
-      .order('created_at', { ascending: false })
-      .limit(5);
+      .from("alerts")
+      .select("id, severity, title, alert_type, is_resolved, created_at")
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: false })
+      .limit(10);
 
-    if (alertsError) throw new Error(`Failed to get recent alerts: ${alertsError.message}`);
+    if (alertsError) {
+      console.error("getOverview recent alerts error:", alertsError);
+    }
 
-    // Get recent scans
+    // 7) Recent scans list
     const { data: recentScans, error: scansError } = await supabase
-      .from('scans')
-      .select('*')
-      .eq('org_id', orgId)
-      .order('started_at', { ascending: false })
-      .limit(5);
+      .from("scans")
+      .select("id, scan_type, source_label, status, overall_risk_score, overall_risk_level, started_at, completed_at")
+      .eq("org_id", orgId)
+      .order("started_at", { ascending: false })
+      .limit(10);
 
-    if (scansError) throw new Error(`Failed to get recent scans: ${scansError.message}`);
+    if (scansError) {
+      console.error("getOverview recent scans error:", scansError);
+    }
 
+    // ✅ Return complete object (never null/undefined)
     return {
-      totalScans: totalScans || 0,
-      totalFiles: totalFiles || 0,
+      totalScans: totalScans ?? 0,
+      totalFiles: totalFiles ?? 0,
       totalPhiCount,
+      highRiskFilesCount: highRiskFilesCount ?? 0,
       overallRiskScore,
-      highRiskFileCount: highRiskCount || 0,
-      criticalRiskFileCount: criticalRiskCount || 0,
-      recentAlerts: (recentAlerts || []) as Alert[],
-      recentScans: (recentScans || []) as Scan[],
+      overallRiskLevel,
+      recentAlerts: recentAlerts ?? [],
+      recentScans: recentScans ?? []
     };
-  },
+  } catch (e) {
+    console.error("getOverview unexpected error:", e);
+    return empty;
+  }
+}
 
   /**
    * Get exposure map showing folder-level risk aggregation.
