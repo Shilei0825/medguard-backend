@@ -1,4 +1,4 @@
-import dashboardService from '../services/dashboardService';
+import { supabase } from '../config/supabaseClient';
 import {
   Scan,
   Alert,
@@ -8,6 +8,7 @@ import {
   RiskSimulationRequest,
   RiskSimulationResponse,
 } from '../types/db';
+
 
 interface DashboardOverview {
   totalScans: number;
