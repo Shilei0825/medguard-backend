@@ -1,4 +1,4 @@
-import { supabase } from '../config/supabaseClient';
+import dashboardService from '../services/dashboardService';
 import {
   Scan,
   Alert,
