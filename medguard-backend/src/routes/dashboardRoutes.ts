@@ -1,6 +1,5 @@
 import { Router, Request, Response } from 'express';
-import dashboardService from "../services/dashboardService";
-
+import dashboardService from '../services/dashboardService';
 import { RiskSimulationRequest } from '../types/db';
 
 const router = Router();
@@ -21,15 +20,16 @@ router.get('/overview', async (req: Request, res: Response) => {
 
     const overview = await dashboardService.getOverview(orgId);
 
+    // IMPORTANT: keep key names aligned with DashboardOverview interface
     res.status(200).json({
-      totalScans: overview?.totalScans ?? 0,
-      totalFiles: overview?.totalFiles ?? 0,
-      totalPhiCount: overview?.totalPhiCount ?? 0,
-      highRiskFilesCount: overview?.highRiskFilesCount ?? 0,
-      overallRiskScore: overview?.overallRiskScore ?? 0,
-      overallRiskLevel: overview?.overallRiskLevel ?? 'LOW',
-      recentAlerts: overview?.recentAlerts ?? [],
-      recentScans: overview?.recentScans ?? [],
+      totalScans: overview.totalScans,
+      totalFiles: overview.totalFiles,
+      totalPhiCount: overview.totalPhiCount,
+      overallRiskScore: overview.overallRiskScore,
+      highRiskFileCount: overview.highRiskFileCount,
+      criticalRiskFileCount: overview.criticalRiskFileCount,
+      recentAlerts: overview.recentAlerts,
+      recentScans: overview.recentScans,
     });
   } catch (err) {
     console.error('Dashboard overview error:', err);
@@ -40,10 +40,8 @@ router.get('/overview', async (req: Request, res: Response) => {
   }
 });
 
-
 /**
  * GET /api/dashboard/exposure-map
- * Get folder-level risk aggregation (PHI Exposure Map).
  * Query params: orgId (required), scanId (optional)
  */
 router.get('/exposure-map', async (req: Request, res: Response) => {
@@ -55,11 +53,8 @@ router.get('/exposure-map', async (req: Request, res: Response) => {
       return;
     }
 
-    const exposureMap = await dashboardService.getExposureMap(
-      orgId,
-      scanId as string | undefined
-    );
-    res.json(exposureMap);
+    const exposureMap = await dashboardService.getExposureMap(orgId, scanId as string | undefined);
+    res.status(200).json(exposureMap);
   } catch (err) {
     console.error('Exposure map error:', err);
     res.status(500).json({
@@ -71,7 +66,6 @@ router.get('/exposure-map', async (req: Request, res: Response) => {
 
 /**
  * GET /api/dashboard/risk-timeline
- * Get historical risk trend data.
  * Query params: orgId (required), days (optional, default 30)
  */
 router.get('/risk-timeline', async (req: Request, res: Response) => {
@@ -86,7 +80,8 @@ router.get('/risk-timeline', async (req: Request, res: Response) => {
     const timeline = await dashboardService.getRiskTimeline(orgId, {
       days: days ? parseInt(days as string, 10) : undefined,
     });
-    res.json(timeline);
+
+    res.status(200).json(timeline);
   } catch (err) {
     console.error('Risk timeline error:', err);
     res.status(500).json({
@@ -98,12 +93,7 @@ router.get('/risk-timeline', async (req: Request, res: Response) => {
 
 /**
  * POST /api/dashboard/risk-simulation
- * Simulate risk reduction by removing specific files.
- * Request body:
- * {
- *   "orgId": "uuid",
- *   "fileIdsToRemove": ["uuid1", "uuid2", ...]
- * }
+ * Body: { orgId: string, fileIdsToRemove: string[] }
  */
 router.post('/risk-simulation', async (req: Request, res: Response) => {
   try {
@@ -119,7 +109,7 @@ router.post('/risk-simulation', async (req: Request, res: Response) => {
     }
 
     const simulation = await dashboardService.simulateRiskReduction(body);
-    res.json(simulation);
+    res.status(200).json(simulation);
   } catch (err) {
     console.error('Risk simulation error:', err);
     res.status(500).json({
@@ -131,7 +121,6 @@ router.post('/risk-simulation', async (req: Request, res: Response) => {
 
 /**
  * GET /api/dashboard/phi-density
- * Get PHI density by folder.
  * Query params: orgId (required)
  */
 router.get('/phi-density', async (req: Request, res: Response) => {
@@ -144,7 +133,7 @@ router.get('/phi-density', async (req: Request, res: Response) => {
     }
 
     const density = await dashboardService.getPhiDensity(orgId);
-    res.json({ folders: density });
+    res.status(200).json({ folders: density });
   } catch (err) {
     console.error('PHI density error:', err);
     res.status(500).json({
@@ -156,9 +145,7 @@ router.get('/phi-density', async (req: Request, res: Response) => {
 
 /**
  * POST /api/dashboard/snapshot
- * Create a daily risk snapshot for the organization.
- * This would typically be called by a scheduled job.
- * Request body: { "orgId": "uuid" }
+ * Body: { orgId: string }
  */
 router.post('/snapshot', async (req: Request, res: Response) => {
   try {
