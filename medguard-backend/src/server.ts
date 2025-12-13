@@ -30,7 +30,6 @@ const app: Express = express();
  */
 
 // Optional: comma-separated list of allowed origins from env
-// Example:
 // FRONTEND_ORIGINS="https://app.medguard.com,https://staging.medguard.com"
 const extraAllowedOrigins = (process.env.FRONTEND_ORIGINS || "")
   .split(",")
@@ -38,9 +37,9 @@ const extraAllowedOrigins = (process.env.FRONTEND_ORIGINS || "")
   .filter(Boolean);
 
 const allowedOriginPatterns: RegExp[] = [
-  /^https:\/\/.*\.lovableproject\.com$/i, // Lovable preview
+  /^https:\/\/.*\.lovableproject\.com$/i, // old Lovable preview domains
+  /^https:\/\/.*\.lovable\.app$/i,        // new Lovable preview/published domains
   /^http:\/\/localhost:\d+$/i,            // local dev
-  /^http:\/\/127\.0\.0\.1:\d+$/i,         // local dev
 ];
 
 function isOriginAllowed(origin?: string): boolean {
@@ -49,21 +48,22 @@ function isOriginAllowed(origin?: string): boolean {
   return allowedOriginPatterns.some((re) => re.test(origin));
 }
 
-app.use(
-  cors({
-    origin: (origin, cb) => {
-      if (isOriginAllowed(origin)) return cb(null, true);
-      return cb(new Error(`CORS blocked for origin: ${origin}`));
-    },
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: false,
-    maxAge: 86400,
-  })
-);
+const corsOptions: cors.CorsOptions = {
+  origin: (origin, cb) => {
+    if (isOriginAllowed(origin)) return cb(null, true);
+    return cb(new Error(`CORS blocked for origin: ${origin}`));
+  },
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: false,
+  maxAge: 86400,
+};
 
-// Ensure preflight always succeeds
-app.options("*", cors());
+app.use(cors(corsOptions));
+
+// ✅ IMPORTANT: preflight must use the same options
+app.options("*", cors(corsOptions));
+
 
 /**
  * ============================================================================
@@ -142,14 +142,20 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   console.error("Unhandled error:", err);
 
   const isDev = env.NODE_ENV === "development";
+  const msg = err?.message || "An unexpected error occurred";
 
-  // If CORS blocks an origin, it will throw here — we want a clean error response.
-  res.status(500).json({
+  // If this is a CORS block, return 403
+  if (msg.startsWith("CORS blocked for origin:")) {
+    return res.status(403).json({ error: "CORS Forbidden", message: msg });
+  }
+
+  return res.status(500).json({
     error: "Internal Server Error",
-    message: isDev ? err.message : "An unexpected error occurred",
+    message: isDev ? msg : "An unexpected error occurred",
     ...(isDev && { stack: err.stack }),
   });
 });
+
 
 /**
  * ============================================================================
