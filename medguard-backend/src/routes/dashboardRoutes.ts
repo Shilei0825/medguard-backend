@@ -19,7 +19,17 @@ router.get('/overview', async (req: Request, res: Response) => {
     }
 
     const overview = await dashboardService.getOverview(orgId);
-    res.json(overview);
+
+    res.status(200).json({
+      totalScans: overview?.totalScans ?? 0,
+      totalFiles: overview?.totalFiles ?? 0,
+      totalPhiCount: overview?.totalPhiCount ?? 0,
+      highRiskFilesCount: overview?.highRiskFilesCount ?? 0,
+      overallRiskScore: overview?.overallRiskScore ?? 0,
+      overallRiskLevel: overview?.overallRiskLevel ?? 'LOW',
+      recentAlerts: overview?.recentAlerts ?? [],
+      recentScans: overview?.recentScans ?? [],
+    });
   } catch (err) {
     console.error('Dashboard overview error:', err);
     res.status(500).json({
@@ -28,6 +38,7 @@ router.get('/overview', async (req: Request, res: Response) => {
     });
   }
 });
+
 
 /**
  * GET /api/dashboard/exposure-map
