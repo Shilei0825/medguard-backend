@@ -9,7 +9,6 @@ import {
   RiskSimulationResponse,
 } from '../types/db';
 
-
 interface DashboardOverview {
   totalScans: number;
   totalFiles: number;
@@ -62,9 +61,7 @@ const dashboardService = {
         .select('*', { count: 'exact', head: true })
         .eq('org_id', orgId);
 
-      if (scanCountError) {
-        console.error('getOverview scan count error:', scanCountError);
-      }
+      if (scanCountError) console.error('getOverview scan count error:', scanCountError);
 
       // 2) Total files count
       const { count: totalFiles, error: fileCountError } = await supabase
@@ -72,9 +69,7 @@ const dashboardService = {
         .select('*', { count: 'exact', head: true })
         .eq('org_id', orgId);
 
-      if (fileCountError) {
-        console.error('getOverview file count error:', fileCountError);
-      }
+      if (fileCountError) console.error('getOverview file count error:', fileCountError);
 
       // 3) Total PHI count (sum phi_count across scanned_files)
       let totalPhiCount = 0;
@@ -87,9 +82,7 @@ const dashboardService = {
       if (phiSumError) {
         console.error('getOverview phi sum error:', phiSumError);
       } else if (phiRows) {
-        totalPhiCount = phiRows.reduce((acc: number, r: any) => {
-          return acc + (Number(r.phi_count) || 0);
-        }, 0);
+        totalPhiCount = (phiRows as any[]).reduce((acc: number, r: any) => acc + (Number(r.phi_count) || 0), 0);
       }
 
       // 4) High risk file count (HIGH)
@@ -99,9 +92,7 @@ const dashboardService = {
         .eq('org_id', orgId)
         .eq('risk_level', 'HIGH');
 
-      if (highRiskError) {
-        console.error('getOverview high risk count error:', highRiskError);
-      }
+      if (highRiskError) console.error('getOverview high risk count error:', highRiskError);
 
       // 5) Critical risk file count (CRITICAL)
       const { count: criticalRiskCount, error: criticalRiskError } = await supabase
@@ -110,25 +101,20 @@ const dashboardService = {
         .eq('org_id', orgId)
         .eq('risk_level', 'CRITICAL');
 
-      if (criticalRiskError) {
-        console.error('getOverview critical risk count error:', criticalRiskError);
-      }
+      if (criticalRiskError) console.error('getOverview critical risk count error:', criticalRiskError);
 
       // 6) Latest completed scan for overall risk score
-      // Use maybeSingle so it won't throw if there are no rows.
-      const { data: latestScan, error: latestScanError } = await supabase
+      const { data: latestScans, error: latestScanError } = await supabase
         .from('scans')
         .select('overall_risk_score, completed_at')
         .eq('org_id', orgId)
         .eq('status', 'completed')
         .order('completed_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .limit(1);
 
-      if (latestScanError) {
-        console.error('getOverview latest scan error:', latestScanError);
-      }
+      if (latestScanError) console.error('getOverview latest scan error:', latestScanError);
 
+      const latestScan = (latestScans && latestScans.length > 0) ? (latestScans[0] as any) : null;
       const overallRiskScore =
         latestScan && latestScan.overall_risk_score !== null && latestScan.overall_risk_score !== undefined
           ? Number(latestScan.overall_risk_score)
@@ -142,9 +128,7 @@ const dashboardService = {
         .order('created_at', { ascending: false })
         .limit(10);
 
-      if (alertsError) {
-        console.error('getOverview recent alerts error:', alertsError);
-      }
+      if (alertsError) console.error('getOverview recent alerts error:', alertsError);
 
       // 8) Recent scans (latest 10)
       const { data: recentScans, error: scansError } = await supabase
@@ -154,11 +138,8 @@ const dashboardService = {
         .order('started_at', { ascending: false })
         .limit(10);
 
-      if (scansError) {
-        console.error('getOverview recent scans error:', scansError);
-      }
+      if (scansError) console.error('getOverview recent scans error:', scansError);
 
-      // ✅ Return complete object (never empty)
       return {
         totalScans: totalScans ?? 0,
         totalFiles: totalFiles ?? 0,
@@ -177,27 +158,23 @@ const dashboardService = {
 
   /**
    * Get exposure map showing folder-level risk aggregation.
-   * Returns { folders: [...] }
    */
   async getExposureMap(orgId: string, scanId?: string): Promise<{ folders: ExposureMapFolder[] }> {
     try {
       let effectiveScanId = scanId;
 
       if (!effectiveScanId) {
-        // Get most recent completed scan
-        const { data: latestScan, error: latestScanErr } = await supabase
+        const { data: latestScans, error: latestScanErr } = await supabase
           .from('scans')
           .select('id')
           .eq('org_id', orgId)
           .eq('status', 'completed')
           .order('completed_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
+          .limit(1);
 
-        if (latestScanErr) {
-          console.error('getExposureMap latest scan error:', latestScanErr);
-        }
+        if (latestScanErr) console.error('getExposureMap latest scan error:', latestScanErr);
 
+        const latestScan = (latestScans && latestScans.length > 0) ? (latestScans[0] as any) : null;
         effectiveScanId = latestScan?.id;
       }
 
@@ -207,9 +184,7 @@ const dashboardService = {
         .eq('org_id', orgId)
         .order('avg_risk_score', { ascending: false });
 
-      if (effectiveScanId) {
-        query = query.eq('scan_id', effectiveScanId);
-      }
+      if (effectiveScanId) query = query.eq('scan_id', effectiveScanId);
 
       const { data: folderRisks, error } = await query;
 
@@ -235,7 +210,6 @@ const dashboardService = {
 
   /**
    * Get risk timeline showing historical risk trends.
-   * Returns { points: [...] }
    */
   async getRiskTimeline(orgId: string, options: { days?: number } = {}): Promise<{ points: RiskTimelinePoint[] }> {
     const days = options.days || 30;
@@ -251,18 +225,16 @@ const dashboardService = {
         .gte('snapshot_date', startDate.toISOString())
         .order('snapshot_date', { ascending: true });
 
-      if (snapshotsError) {
-        console.error('getRiskTimeline snapshots error:', snapshotsError);
-      }
+      if (snapshotsError) console.error('getRiskTimeline snapshots error:', snapshotsError);
 
       if (snapshots && snapshots.length > 0) {
-        const points: RiskTimelinePoint[] = snapshots.map((s: RiskSnapshot) => ({
+        const points: RiskTimelinePoint[] = (snapshots as any[]).map((s: any) => ({
           label: new Date(s.snapshot_date).toLocaleDateString(),
           date: s.snapshot_date,
-          totalFiles: s.total_files,
-          totalPhiCount: s.total_phi_count,
-          overallRiskScore: s.overall_risk_score,
-          overallRiskLevel: s.overall_risk_level,
+          totalFiles: Number(s.total_files) || 0,
+          totalPhiCount: Number(s.total_phi_count) || 0,
+          overallRiskScore: s.overall_risk_score !== null && s.overall_risk_score !== undefined ? Number(s.overall_risk_score) : null,
+          overallRiskLevel: (s.overall_risk_level as RiskLevel) ?? null,
         }));
         return { points };
       }
@@ -293,7 +265,7 @@ const dashboardService = {
         }
       >();
 
-      for (const scan of scans || []) {
+      for (const scan of (scans || []) as any[]) {
         if (!scan.completed_at) continue;
         const dateKey = new Date(scan.completed_at).toISOString().split('T')[0];
 
@@ -307,8 +279,8 @@ const dashboardService = {
         }
 
         const entry = dateMap.get(dateKey)!;
-        entry.totalFiles += (scan.total_files as any) || 0;
-        entry.totalPhiCount += (scan.total_phi_count as any) || 0;
+        entry.totalFiles += Number(scan.total_files) || 0;
+        entry.totalPhiCount += Number(scan.total_phi_count) || 0;
 
         if (scan.overall_risk_score !== null && scan.overall_risk_score !== undefined) {
           entry.riskScores.push(Number(scan.overall_risk_score));
@@ -332,7 +304,7 @@ const dashboardService = {
             data.riskScores.length > 0
               ? Math.round(data.riskScores.reduce((a, b) => a + b, 0) / data.riskScores.length)
               : null,
-          overallRiskLevel: data.maxRiskLevel || 'LOW',
+          overallRiskLevel: data.maxRiskLevel ?? null,
         }))
         .sort((a, b) => a.date.localeCompare(b.date));
 
@@ -363,14 +335,14 @@ const dashboardService = {
     let currentFileCount = 0;
     let simulatedFileCount = 0;
 
-    for (const file of allFiles || []) {
-      currentTotalPhiCount += file.phi_count || 0;
-      currentTotalRiskScore += file.risk_score || 0;
+    for (const file of (allFiles || []) as any[]) {
+      currentTotalPhiCount += Number(file.phi_count) || 0;
+      currentTotalRiskScore += Number(file.risk_score) || 0;
       currentFileCount++;
 
       if (!fileIdsToRemove.includes(file.id)) {
-        simulatedTotalPhiCount += file.phi_count || 0;
-        simulatedTotalRiskScore += file.risk_score || 0;
+        simulatedTotalPhiCount += Number(file.phi_count) || 0;
+        simulatedTotalRiskScore += Number(file.risk_score) || 0;
         simulatedFileCount++;
       }
     }
@@ -395,16 +367,11 @@ const dashboardService = {
   },
 
   /**
-   * Get PHI density by folder (files with high PHI concentration).
+   * Get PHI density by folder.
    */
-  async getPhiDensity(orgId: string): Promise<
-    Array<{
-      folderPath: string;
-      avgPhiPerFile: number;
-      totalPhiCount: number;
-      fileCount: number;
-    }>
-  > {
+  async getPhiDensity(
+    orgId: string
+  ): Promise<Array<{ folderPath: string; avgPhiPerFile: number; totalPhiCount: number; fileCount: number }>> {
     const { data: folderRisks, error } = await supabase
       .from('folder_risks')
       .select('folder_path, total_files, total_phi_count')
@@ -418,14 +385,13 @@ const dashboardService = {
     return (folderRisks || []).map((fr: any) => ({
       folderPath: fr.folder_path,
       avgPhiPerFile: fr.total_files > 0 ? Math.round((fr.total_phi_count / fr.total_files) * 10) / 10 : 0,
-      totalPhiCount: fr.total_phi_count,
-      fileCount: fr.total_files,
+      totalPhiCount: Number(fr.total_phi_count) || 0,
+      fileCount: Number(fr.total_files) || 0,
     }));
   },
 
   /**
    * Create a daily risk snapshot for the organization.
-   * Should be called by a scheduled job.
    */
   async createRiskSnapshot(orgId: string): Promise<RiskSnapshot> {
     const overview = await this.getOverview(orgId);
@@ -434,7 +400,7 @@ const dashboardService = {
     const riskLevel: RiskLevel =
       score >= 80 ? 'CRITICAL' : score >= 60 ? 'HIGH' : score >= 30 ? 'MEDIUM' : 'LOW';
 
-    const snapshotData = {
+    const snapshotData: any = {
       org_id: orgId,
       snapshot_date: new Date().toISOString().split('T')[0],
       total_files: overview.totalFiles,
