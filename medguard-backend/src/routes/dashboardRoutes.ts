@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
-import { dashboardService } from '../services/dashboardService';
+import dashboardService from "../services/dashboardService";
+
 import { RiskSimulationRequest } from '../types/db';
 
 const router = Router();
