@@ -1,78 +1,93 @@
-import { Router, Request, Response } from 'express';
-import { complianceService } from '../services/complianceService';
-import { ComplianceFramework, TaskStatus, PhiSeverity } from '../types/db';
+import { Router, Request, Response } from "express";
+import complianceService from "../services/complianceService";
+import { ComplianceFramework, TaskStatus, PhiSeverity } from "../types/db";
 
 const router = Router();
 
 /**
  * GET /api/compliance/snapshot
- * Get the latest compliance snapshot for an organization.
  * Query params: orgId (required), framework (optional)
+ *
+ * IMPORTANT:
+ * - Always return 200 + JSON (Lovable expects 200, not 404).
+ * - If no snapshot exists yet, we can auto-create one (recommended).
  */
-router.get('/snapshot', async (req: Request, res: Response) => {
+router.get("/snapshot", async (req: Request, res: Response) => {
   try {
     const { orgId, framework } = req.query;
 
-    if (!orgId || typeof orgId !== 'string') {
-      res.status(400).json({ error: 'orgId query parameter is required' });
-      return;
+    if (!orgId || typeof orgId !== "string") {
+      return res.status(400).json({ error: "orgId query parameter is required" });
     }
 
-    const snapshot = await complianceService.getLatestSnapshot(
-      orgId,
-      framework as ComplianceFramework | undefined
-    );
+    const fw =
+      typeof framework === "string" && framework.length > 0
+        ? (framework as ComplianceFramework)
+        : ("HIPAA" as ComplianceFramework);
 
+    // Try to get latest snapshot
+    const snapshot = await complianceService.getLatestSnapshot(orgId, fw);
+
+    // ✅ If missing, AUTO-CREATE one so frontend has data
     if (!snapshot) {
-      res.status(404).json({ error: 'No compliance snapshot found' });
-      return;
+      try {
+        const created = await complianceService.createSnapshot(orgId, fw);
+        return res.status(200).json(created);
+      } catch (createErr) {
+        console.error("Auto-create snapshot failed:", createErr);
+
+        // Still return 200 so frontend doesn't hard-fail
+        return res.status(200).json({
+          snapshot: null,
+          framework: fw,
+          message: "No snapshot existed yet; auto-create failed.",
+        });
+      }
     }
 
-    res.json(snapshot);
+    // ✅ Always 200
+    return res.status(200).json(snapshot);
   } catch (err) {
-    console.error('Get compliance snapshot error:', err);
-    res.status(500).json({
-      error: 'Failed to get compliance snapshot',
-      message: err instanceof Error ? err.message : 'Unknown error',
+    console.error("Get compliance snapshot error:", err);
+    return res.status(500).json({
+      error: "Failed to get compliance snapshot",
+      message: err instanceof Error ? err.message : "Unknown error",
     });
   }
 });
 
 /**
  * GET /api/compliance/items
- * List compliance items for an organization.
  * Query params: orgId (required), framework (optional), status (optional)
  */
-router.get('/items', async (req: Request, res: Response) => {
+router.get("/items", async (req: Request, res: Response) => {
   try {
     const { orgId, framework, status } = req.query;
 
-    if (!orgId || typeof orgId !== 'string') {
-      res.status(400).json({ error: 'orgId query parameter is required' });
-      return;
+    if (!orgId || typeof orgId !== "string") {
+      return res.status(400).json({ error: "orgId query parameter is required" });
     }
 
     const items = await complianceService.listComplianceItems(orgId, {
-      framework: framework as ComplianceFramework | undefined,
+      framework: typeof framework === "string" ? (framework as ComplianceFramework) : undefined,
       status: status as any,
     });
 
-    res.json({ items });
+    return res.status(200).json({ items: items ?? [] });
   } catch (err) {
-    console.error('List compliance items error:', err);
-    res.status(500).json({
-      error: 'Failed to list compliance items',
-      message: err instanceof Error ? err.message : 'Unknown error',
+    console.error("List compliance items error:", err);
+    return res.status(500).json({
+      error: "Failed to list compliance items",
+      message: err instanceof Error ? err.message : "Unknown error",
     });
   }
 });
 
 /**
  * PATCH /api/compliance/items/:itemId
- * Update compliance item status.
- * Request body: { "status": "COMPLIANT | PARTIAL | NON_COMPLIANT", "evidenceNotes": "string" }
+ * Body: { status, evidenceNotes }
  */
-router.patch('/items/:itemId', async (req: Request, res: Response) => {
+router.patch("/items/:itemId", async (req: Request, res: Response) => {
   try {
     const { itemId } = req.params;
     const { status, evidenceNotes } = req.body;
@@ -82,89 +97,72 @@ router.patch('/items/:itemId', async (req: Request, res: Response) => {
       evidenceNotes,
     });
 
-    res.json(item);
+    return res.status(200).json(item);
   } catch (err) {
-    console.error('Update compliance item error:', err);
-    res.status(500).json({
-      error: 'Failed to update compliance item',
-      message: err instanceof Error ? err.message : 'Unknown error',
+    console.error("Update compliance item error:", err);
+    return res.status(500).json({
+      error: "Failed to update compliance item",
+      message: err instanceof Error ? err.message : "Unknown error",
     });
   }
 });
 
 /**
  * GET /api/compliance/tasks
- * List compliance tasks for an organization.
- * Query params: orgId (required), status (optional), severity (optional), assignedToUserId (optional), limit (optional)
+ * Query params: orgId (required), status(optional), severity(optional), assignedToUserId(optional), limit(optional)
  */
-router.get('/tasks', async (req: Request, res: Response) => {
+router.get("/tasks", async (req: Request, res: Response) => {
   try {
     const { orgId, status, severity, assignedToUserId, limit } = req.query;
 
-    if (!orgId || typeof orgId !== 'string') {
-      res.status(400).json({ error: 'orgId query parameter is required' });
-      return;
+    if (!orgId || typeof orgId !== "string") {
+      return res.status(400).json({ error: "orgId query parameter is required" });
     }
 
     const tasks = await complianceService.listTasks(orgId, {
-      status: status as TaskStatus | undefined,
-      severity: severity as PhiSeverity | undefined,
-      assignedToUserId: assignedToUserId as string | undefined,
-      limit: limit ? parseInt(limit as string, 10) : undefined,
+      status: typeof status === "string" ? (status as TaskStatus) : undefined,
+      severity: typeof severity === "string" ? (severity as PhiSeverity) : undefined,
+      assignedToUserId: typeof assignedToUserId === "string" ? assignedToUserId : undefined,
+      limit: typeof limit === "string" ? parseInt(limit, 10) : undefined,
     });
 
-    res.json({ tasks });
+    return res.status(200).json({ tasks: tasks ?? [] });
   } catch (err) {
-    console.error('List compliance tasks error:', err);
-    res.status(500).json({
-      error: 'Failed to list compliance tasks',
-      message: err instanceof Error ? err.message : 'Unknown error',
+    console.error("List compliance tasks error:", err);
+    return res.status(500).json({
+      error: "Failed to list compliance tasks",
+      message: err instanceof Error ? err.message : "Unknown error",
     });
   }
 });
 
 /**
  * GET /api/compliance/tasks/:taskId
- * Get task by ID.
  */
-router.get('/tasks/:taskId', async (req: Request, res: Response) => {
+router.get("/tasks/:taskId", async (req: Request, res: Response) => {
   try {
     const { taskId } = req.params;
 
     const task = await complianceService.getTaskById(taskId);
 
     if (!task) {
-      res.status(404).json({ error: 'Task not found' });
-      return;
+      return res.status(404).json({ error: "Task not found" });
     }
 
-    res.json(task);
+    return res.status(200).json(task);
   } catch (err) {
-    console.error('Get compliance task error:', err);
-    res.status(500).json({
-      error: 'Failed to get compliance task',
-      message: err instanceof Error ? err.message : 'Unknown error',
+    console.error("Get compliance task error:", err);
+    return res.status(500).json({
+      error: "Failed to get compliance task",
+      message: err instanceof Error ? err.message : "Unknown error",
     });
   }
 });
 
 /**
  * POST /api/compliance/tasks
- * Create a compliance task.
- * Request body:
- * {
- *   "orgId": "uuid",
- *   "createdByUserId": "uuid or null",
- *   "title": "string",
- *   "description": "string",
- *   "severity": "LOW | MEDIUM | HIGH | CRITICAL",
- *   "dueDate": "ISO date string",
- *   "relatedScanId": "uuid or null",
- *   "relatedFileId": "uuid or null",
- *   "relatedAlertId": "uuid or null"
- * }
  */
-router.post('/tasks', async (req: Request, res: Response) => {
+router.post("/tasks", async (req: Request, res: Response) => {
   try {
     const {
       orgId,
@@ -180,18 +178,9 @@ router.post('/tasks', async (req: Request, res: Response) => {
       relatedComplianceItemId,
     } = req.body;
 
-    if (!orgId) {
-      res.status(400).json({ error: 'orgId is required' });
-      return;
-    }
-    if (!title) {
-      res.status(400).json({ error: 'title is required' });
-      return;
-    }
-    if (!severity) {
-      res.status(400).json({ error: 'severity is required' });
-      return;
-    }
+    if (!orgId) return res.status(400).json({ error: "orgId is required" });
+    if (!title) return res.status(400).json({ error: "title is required" });
+    if (!severity) return res.status(400).json({ error: "severity is required" });
 
     const task = await complianceService.createTask({
       orgId,
@@ -207,143 +196,120 @@ router.post('/tasks', async (req: Request, res: Response) => {
       relatedComplianceItemId,
     });
 
-    res.status(201).json(task);
+    return res.status(201).json(task);
   } catch (err) {
-    console.error('Create compliance task error:', err);
-    res.status(500).json({
-      error: 'Failed to create compliance task',
-      message: err instanceof Error ? err.message : 'Unknown error',
+    console.error("Create compliance task error:", err);
+    return res.status(500).json({
+      error: "Failed to create compliance task",
+      message: err instanceof Error ? err.message : "Unknown error",
     });
   }
 });
 
 /**
  * PATCH /api/compliance/tasks/:taskId/status
- * Update task status.
- * Request body: { "status": "pending | in_progress | completed | overdue" }
  */
-router.patch('/tasks/:taskId/status', async (req: Request, res: Response) => {
+router.patch("/tasks/:taskId/status", async (req: Request, res: Response) => {
   try {
     const { taskId } = req.params;
     const { status } = req.body;
 
-    if (!status) {
-      res.status(400).json({ error: 'status is required' });
-      return;
-    }
+    if (!status) return res.status(400).json({ error: "status is required" });
 
     const task = await complianceService.updateTaskStatus(taskId, status);
-    res.json(task);
+    return res.status(200).json(task);
   } catch (err) {
-    console.error('Update task status error:', err);
-    res.status(500).json({
-      error: 'Failed to update task status',
-      message: err instanceof Error ? err.message : 'Unknown error',
+    console.error("Update task status error:", err);
+    return res.status(500).json({
+      error: "Failed to update task status",
+      message: err instanceof Error ? err.message : "Unknown error",
     });
   }
 });
 
 /**
  * PATCH /api/compliance/tasks/:taskId/assign
- * Assign task to a user.
- * Request body: { "userId": "uuid" }
  */
-router.patch('/tasks/:taskId/assign', async (req: Request, res: Response) => {
+router.patch("/tasks/:taskId/assign", async (req: Request, res: Response) => {
   try {
     const { taskId } = req.params;
     const { userId } = req.body;
 
-    if (!userId) {
-      res.status(400).json({ error: 'userId is required' });
-      return;
-    }
+    if (!userId) return res.status(400).json({ error: "userId is required" });
 
     const task = await complianceService.assignTask(taskId, userId);
-    res.json(task);
+    return res.status(200).json(task);
   } catch (err) {
-    console.error('Assign task error:', err);
-    res.status(500).json({
-      error: 'Failed to assign task',
-      message: err instanceof Error ? err.message : 'Unknown error',
+    console.error("Assign task error:", err);
+    return res.status(500).json({
+      error: "Failed to assign task",
+      message: err instanceof Error ? err.message : "Unknown error",
     });
   }
 });
 
 /**
  * GET /api/compliance/summary
- * Get compliance summary for an organization.
- * Query params: orgId (required)
+ * Query: orgId
  */
-router.get('/summary', async (req: Request, res: Response) => {
+router.get("/summary", async (req: Request, res: Response) => {
   try {
     const { orgId } = req.query;
 
-    if (!orgId || typeof orgId !== 'string') {
-      res.status(400).json({ error: 'orgId query parameter is required' });
-      return;
+    if (!orgId || typeof orgId !== "string") {
+      return res.status(400).json({ error: "orgId query parameter is required" });
     }
 
     const summary = await complianceService.getComplianceSummary(orgId);
-    res.json(summary);
+    return res.status(200).json(summary);
   } catch (err) {
-    console.error('Get compliance summary error:', err);
-    res.status(500).json({
-      error: 'Failed to get compliance summary',
-      message: err instanceof Error ? err.message : 'Unknown error',
+    console.error("Get compliance summary error:", err);
+    return res.status(500).json({
+      error: "Failed to get compliance summary",
+      message: err instanceof Error ? err.message : "Unknown error",
     });
   }
 });
 
 /**
  * POST /api/compliance/snapshot
- * Create a compliance snapshot.
- * Request body: { "orgId": "uuid", "framework": "HIPAA | GDPR | ..." }
+ * Body: { orgId, framework }
  */
-router.post('/snapshot', async (req: Request, res: Response) => {
+router.post("/snapshot", async (req: Request, res: Response) => {
   try {
     const { orgId, framework } = req.body;
 
-    if (!orgId) {
-      res.status(400).json({ error: 'orgId is required' });
-      return;
-    }
-    if (!framework) {
-      res.status(400).json({ error: 'framework is required' });
-      return;
-    }
+    if (!orgId) return res.status(400).json({ error: "orgId is required" });
+    if (!framework) return res.status(400).json({ error: "framework is required" });
 
     const snapshot = await complianceService.createSnapshot(orgId, framework);
-    res.status(201).json(snapshot);
+    return res.status(201).json(snapshot);
   } catch (err) {
-    console.error('Create compliance snapshot error:', err);
-    res.status(500).json({
-      error: 'Failed to create compliance snapshot',
-      message: err instanceof Error ? err.message : 'Unknown error',
+    console.error("Create compliance snapshot error:", err);
+    return res.status(500).json({
+      error: "Failed to create compliance snapshot",
+      message: err instanceof Error ? err.message : "Unknown error",
     });
   }
 });
 
 /**
  * POST /api/compliance/mark-overdue
- * Mark overdue tasks.
- * Request body: { "orgId": "uuid" }
+ * Body: { orgId }
  */
-router.post('/mark-overdue', async (req: Request, res: Response) => {
+router.post("/mark-overdue", async (req: Request, res: Response) => {
   try {
     const { orgId } = req.body;
 
-    if (!orgId) {
-      res.status(400).json({ error: 'orgId is required' });
-      return;
-    }
+    if (!orgId) return res.status(400).json({ error: "orgId is required" });
 
     const count = await complianceService.markOverdueTasks(orgId);
-    res.json({ markedOverdue: count });
+    return res.status(200).json({ markedOverdue: count });
   } catch (err) {
-    console.error('Mark overdue tasks error:', err);
-    res.status(500).json({
-      error: 'Failed to mark overdue tasks',
-      message: err instanceof Error ? err.message : 'Unknown error',
+    console.error("Mark overdue tasks error:", err);
+    return res.status(500).json({
+      error: "Failed to mark overdue tasks",
+      message: err instanceof Error ? err.message : "Unknown error",
     });
   }
 });
